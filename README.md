@@ -1,6 +1,7 @@
 # ITO-OS: Quantum-Generic Core (v0.1.0)
 
-> **"What if your desktop came with a localized quantum processing unit?"** > 家庭用PCに量子チップが載る時代のOSはどうあるべきか、という空想の記録です。
+> **"What if your desktop came with a localized quantum processing unit?"** 
+> 家庭用PCに量子チップが載る時代のOSはどうあるべきか、という空想の記録です。
 
 ## 🌌 Overview / 概要
 A snapshot of an experimental bare-metal kernel written in Rust for x86_64.  
