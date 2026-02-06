@@ -1,9 +1,7 @@
 #![no_std]
 #![no_main]
 #![allow(static_mut_refs)]
-#![reexport_test_harness_main = "test_main"]
 #![feature(custom_test_frameworks)]
-#![test_runner(crate::test_runner)]
 
 mod vga;
 mod quantum;
@@ -32,7 +30,6 @@ pub extern "C" fn _start() -> ! {
             poll_input(&mut env);
             vga::write_vga(&BACK_BUFFER);
         }
-        // ループ速度の調整
         for _ in 0..5000 { unsafe { core::arch::asm!("nop"); } }
     }
 }
@@ -44,40 +41,67 @@ unsafe fn poll_input(env: &mut impl QuantumEnv) {
         let sc: u8;
         core::arch::asm!("in al, 0x60", out("al") sc);
         match sc {
-            0x1E => { let _ = Q_MGR.allocate(); } // 'A' key
-            0x13 => { for i in 0..8 { let _ = Q_MGR.release(i); } } // 'R' key
-            0x39 => { env.interfere(Q_MGR.total_allocated as usize, 0xAA); } // SPACE key
+            0x1E => { // 'A' key: ALLOC & HADAMARD
+                if let Ok(id) = Q_MGR.allocate() {
+                    env.reset_qubit(id as usize);
+                }
+            } 
+            0x13 => { // 'R' key: RESET
+                for i in 0..8 { let _ = Q_MGR.release(i); }
+            }
+            0x39 => { // SPACE: MEASURE first superposition unit
+                for i in 0..8 {
+                    if Q_MGR.slots[i].is_busy {
+                        let q = env.get_qubit(i);
+                        // aかbのどちらかが100%(256)でない場合は「未測定」とみなす
+                        if q.a.re != 256 && q.b.re != 256 {
+                             env.measure(i);
+                             break;
+                        }
+                    }
+                }
+            } 
             _ => {}
         }
     }
 }
 
 unsafe fn render(env: &mut impl QuantumEnv) {
-    vga::print_buffer(&mut BACK_BUFFER, b"ITO-OS v0.2.0 [HIGH-FIDELITY]", 0, 0, 0x1B);
-    
+    vga::print_buffer(&mut BACK_BUFFER, b"ITO-OS v0.2.1 [QUANTUM CORE]", 0, 0, 0x1B);
     vga::print_buffer(&mut BACK_BUFFER, b"ENTROPY:", 2, 2, 0x07);
-    let entropy = env.get_entropy();
-    vga::draw_num(&mut BACK_BUFFER, entropy, 2, 15, 0x0E);
+    vga::draw_num(&mut BACK_BUFFER, env.get_entropy(), 2, 15, 0x0E);
     
-    let ent_bar = (entropy / 500).min(20) as u8;
-    vga::draw_bar(&mut BACK_BUFFER, 3, 2, ent_bar, 20, 0x40, 0x70);
-
     for i in 0..8 {
         let row = 6 + i;
         let slot = &Q_MGR.slots[i];
+        let q_state = env.get_qubit(i);
+        
         vga::print_buffer(&mut BACK_BUFFER, b"UNIT", row, 2, 0x08);
         vga::draw_num(&mut BACK_BUFFER, i as u64, row, 7, 0x08);
         
         if slot.is_busy {
-            vga::print_buffer(&mut BACK_BUFFER, b"[ACTIVE]", row, 10, 0x0A);
-            vga::draw_bar(&mut BACK_BUFFER, row, 19, (slot.coherence / 10).min(10), 10, 0x20, 0x08);
+            let p1 = q_state.b.norm_sq();
+            let total = (q_state.a.norm_sq() + p1).max(1);
+            let bar_val = ((p1 * 10) / total) as u8;
+
+            vga::print_buffer(&mut BACK_BUFFER, b"|psi>", row, 10, 0x0B);
+            vga::draw_bar(&mut BACK_BUFFER, row, 19, bar_val, 10, 0x20, 0x08);
+            
+            // 状態表示の分岐をより厳密に
+            if q_state.a.re == 256 {
+                vga::print_buffer(&mut BACK_BUFFER, b"[ |0> ]", row, 32, 0x0A);
+            } else if q_state.b.re == 256 {
+                vga::print_buffer(&mut BACK_BUFFER, b"[ |1> ]", row, 32, 0x0C);
+            } else {
+                vga::print_buffer(&mut BACK_BUFFER, b"[SUPER]", row, 32, 0x0D);
+            }
         } else {
             vga::print_buffer(&mut BACK_BUFFER, b"[IDLE   ]", row, 10, 0x07);
-            // バーの残像を消去
             vga::print_buffer(&mut BACK_BUFFER, b"          ", row, 19, 0x00);
+            vga::print_buffer(&mut BACK_BUFFER, b"       ", row, 32, 0x00);
         }
     }
-    vga::print_buffer(&mut BACK_BUFFER, b"CTRL: [A] ALLOC  [R] RESET  [SPACE] INTERFERE", 24, 2, 0x08);
+    vga::print_buffer(&mut BACK_BUFFER, b"CTRL: [A] ALLOC+H  [R] RESET  [SPACE] MEASURE", 24, 2, 0x08);
 }
 
 unsafe fn handle_panic(_err: QuantumError) -> ! {
@@ -89,6 +113,3 @@ unsafe fn handle_panic(_err: QuantumError) -> ! {
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! { loop {} }
-
-#[cfg(test)]
-pub fn test_runner(_tests: &[&dyn Fn()]) {}

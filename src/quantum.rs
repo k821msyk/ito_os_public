@@ -1,36 +1,57 @@
-//! High-Fidelity Quantum Physics Simulation Layer v0.2.0
+//! Quantum State Vector Simulation Layer v0.2.1 (Revised)
 
 pub mod physics {
-    pub const INSTABILITY_THRESHOLD: u8 = 0x80;
-    pub const DECOHERENCE_PENALTY: u64 = 5;
-    pub const NOISE_PROBABILITY_SCALE: u64 = 10000;
-    pub const DECAY_INTERVAL: u64 = 10;
-    pub const COOLING_RATE: u64 = 12;
-    pub const INTERFERENCE_MULTIPLIER: u64 = 2;
     pub const MAX_ENTROPY: u64 = 10000;
-    pub const PROPAGATION_PROBABILITY: u64 = 20;
+    pub const COOLING_RATE: u64 = 5;
+}
+
+/// 16-bit固定小数点による複素数表現 (Q8.8形式)
+/// 1.0 = 256
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Complex {
+    pub re: i16,
+    pub im: i16,
+}
+
+impl Complex {
+    pub const fn new(re: i16, im: i16) -> Self { Self { re, im } }
+    
+    /// 振幅の二乗（存在確率）を計算
+    pub fn norm_sq(&self) -> u32 {
+        ((self.re as i32 * self.re as i32) + (self.im as i32 * self.im as i32)) as u32
+    }
+}
+
+/// 1キュービットの状態ベクトル: |ψ> = a|0> + b|1>
+#[derive(Copy, Clone, Debug)]
+pub struct QubitState {
+    pub a: Complex,
+    pub b: Complex,
 }
 
 pub trait QuantumEnv {
     fn step(&mut self);
-    fn interfere(&mut self, addr: usize, val: u8) -> bool;
+    fn measure(&mut self, id: usize) -> u8;
+    fn reset_qubit(&mut self, id: usize);
     fn get_entropy(&self) -> u64;
-    fn get_cell(&self, addr: usize) -> u8;
+    fn get_qubit(&self, id: usize) -> QubitState;
 }
 
 pub struct VirtualQuantumHAL {
-    cells: [u8; 1024],
+    qubits: [QubitState; 8],
     entropy: u64,
-    tick: u64,
     rng_state: u64,
 }
 
 impl VirtualQuantumHAL {
     pub fn new() -> Self {
+        let zero_state = QubitState {
+            a: Complex::new(256, 0),
+            b: Complex::new(0, 0),
+        };
         Self {
-            cells: [0; 1024],
+            qubits: [zero_state; 8],
             entropy: 0,
-            tick: 0,
             rng_state: 0xACE1,
         }
     }
@@ -41,58 +62,47 @@ impl VirtualQuantumHAL {
         self.rng_state ^= self.rng_state << 17;
         self.rng_state
     }
-
-    fn add_entropy(&mut self, amount: u64) {
-        self.entropy = (self.entropy + amount).min(physics::MAX_ENTROPY);
-    }
 }
 
 impl QuantumEnv for VirtualQuantumHAL {
     fn step(&mut self) {
-        use physics::*;
-        self.tick = self.tick.wrapping_add(1);
-
-        let scan_idx = self.tick as usize % 1024;
-        if self.cells[scan_idx] > INSTABILITY_THRESHOLD {
-            self.add_entropy(DECOHERENCE_PENALTY);
-            
-            if self.next_rng() % 100 < PROPAGATION_PROBABILITY {
-                let neighbor = (scan_idx + 1) % 1024;
-                self.cells[neighbor] = self.cells[neighbor].saturating_add(1);
-            }
-        }
-
-        let noise_threshold = NOISE_PROBABILITY_SCALE.saturating_sub(self.entropy);
-        if self.next_rng() % NOISE_PROBABILITY_SCALE > noise_threshold {
-            let target = (self.next_rng() as usize) % 1024;
-            self.cells[target] ^= 1 << (self.next_rng() % 8);
-        }
-
-        if self.tick % DECAY_INTERVAL == 0 {
-            let start = self.next_rng() as usize % 1024;
-            let range = 64;
-            for i in 0..range {
-                let idx = (start + i) % 1024;
-                if self.cells[idx] > 0 {
-                    self.cells[idx] = self.cells[idx].saturating_sub(1);
-                }
-            }
-        }
-
-        self.entropy = self.entropy.saturating_sub(COOLING_RATE);
+        self.entropy = self.entropy.saturating_sub(physics::COOLING_RATE);
     }
 
-    fn interfere(&mut self, addr: usize, val: u8) -> bool {
-        use physics::*;
-        if addr >= 1024 { return false; }
+    /// ユニットを重ね合わせ状態 |+> に初期化
+    fn reset_qubit(&mut self, id: usize) {
+        if id < 8 {
+            // 1/√2 ≈ 181/256
+            self.qubits[id] = QubitState {
+                a: Complex::new(181, 0),
+                b: Complex::new(181, 0),
+            };
+        }
+    }
+
+    /// 確率的測定と波動関数の収縮
+    fn measure(&mut self, id: usize) -> u8 {
+        if id >= 8 { return 0; }
         
-        let impact = (val as u64) * INTERFERENCE_MULTIPLIER;
-        self.add_entropy(impact);
+        let p0 = self.qubits[id].a.norm_sq();
+        let p1 = self.qubits[id].b.norm_sq();
+        let total = (p0 + p1) as u64;
         
-        self.cells[addr] ^= val;
-        true
+        if total == 0 { return 0; }
+
+        let r = self.next_rng() % total;
+        
+        if r < p0 as u64 {
+            self.qubits[id].a = Complex::new(256, 0);
+            self.qubits[id].b = Complex::new(0, 0);
+            0
+        } else {
+            self.qubits[id].a = Complex::new(0, 0);
+            self.qubits[id].b = Complex::new(256, 0);
+            1
+        }
     }
 
     fn get_entropy(&self) -> u64 { self.entropy }
-    fn get_cell(&self, addr: usize) -> u8 { if addr < 1024 { self.cells[addr] } else { 0 } }
+    fn get_qubit(&self, id: usize) -> QubitState { self.qubits[id] }
 }
