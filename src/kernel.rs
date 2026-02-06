@@ -1,13 +1,13 @@
-//! Kernel Resource Management / カーネルリソース管理
+//! Kernel Resource Management v0.2.0
 
 #[derive(Copy, Clone, Debug)]
 pub enum QuantumError {
-    ResourceExhausted,    // Qubit slots full / スロット不足
-    InvalidSlotAccess,    // Memory safety error / 不正アクセス
-    DecoherenceCollapse,  // Critical instability / 物理崩壊
+    ResourceExhausted,
+    InvalidSlotAccess,
+    DecoherenceCollapse,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct QuantumResource {
     pub id: u8,
     pub is_busy: bool,
@@ -52,17 +52,17 @@ impl QuantumResourceManager {
     }
 
     pub fn check_stability(&self, entropy: u64) -> Result<(), QuantumError> {
-        if entropy > 5000 {
+        if entropy > 9000 {
             return Err(QuantumError::DecoherenceCollapse);
         }
         Ok(())
     }
 
     pub fn decay_all(&mut self, entropy: u64) {
-        let loss = (entropy / 500) as u8;
+        let base_loss = (entropy / 500) as u8;
         for slot in self.slots.iter_mut() {
             if slot.is_busy {
-                slot.coherence = slot.coherence.saturating_sub(loss);
+                slot.coherence = slot.coherence.saturating_sub(base_loss);
             }
         }
     }

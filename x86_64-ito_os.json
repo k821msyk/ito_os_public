@@ -10,5 +10,9 @@
     "linker": "rust-lld",
     "panic-strategy": "abort",
     "disable-redzone": true,
-    "features": "-mmx,-sse,+sse2"
+    "features": "-mmx,-sse,+sse2",
+    "dynamic-linking": false,
+    "executables": true,
+    "relocation-model": "static",
+    "frame-pointer": "may-omit"
 }
